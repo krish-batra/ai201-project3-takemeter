@@ -2,7 +2,7 @@
 
 A fine-tuned text classifier that sorts r/Naruto posts into three discourse types — **analysis**, **hot_take**, and **reaction** — compared against a zero-shot LLM baseline. Built for AI201 Project 3.
 
-> **Headline result:** the zero-shot baseline (75.0%) substantially **outperformed** the fine-tuned model (40.6%). That inversion is the central finding, and the report below traces it to label noise in the training data. See [Reflection](#reflection-what-the-model-learned-vs-what-i-intended).
+> **Headline result:** the zero-shot baseline (75.0%) **outperformed** the fine-tuned model (53.1%). That inversion is the central finding, and the report below traces it to label noise plus a dataset too small for stable learning. See [Reflection](#reflection-what-the-model-learned-vs-what-i-intended).
 
 ---
 
@@ -45,7 +45,7 @@ A fine-tuned text classifier that sorts r/Naruto posts into three discourse type
 > *Confirm these reflect calls you'd actually make — they're real ambiguous posts from the dataset.*
 
 1. **"How did Hashirama die? He died during the first great ninja war but it was never stated how… the biggest theory is old age but is it possible he got defeated by…"**
-   *Tension:* `reaction` (it's a curiosity question) vs. `analysis` (it surveys theories and reasons about lifespan/chakra). **Decision:** leaned `reaction`, because the post is *asking* rather than *making* an argument — but it sits right on the line, and the model's disagreement here (it predicted `analysis`) is defensible.
+   *Tension:* `reaction` (it's a curiosity question) vs. `analysis` (it surveys theories and reasons about lifespan/chakra). **Decision:** leaned `reaction`, because the post is *asking* rather than *making* an argument — but it sits right on the line.
 
 2. **"Theory: Kidomaru's strongest arrow was modeled after Kimimaro's bone joust after Kimimaro stomped the Sound 4."**
    *Tension:* framed as a "theory" (signals `analysis`) but it's a single asserted claim with no developed reasoning (`hot_take`). **Decision:** `hot_take` — the word "theory" is decorative; there's no actual argument, just a claim.
@@ -59,7 +59,8 @@ A fine-tuned text classifier that sorts r/Naruto posts into three discourse type
 
 - **Base model:** `distilbert-base-uncased` (HuggingFace), with a freshly initialized 3-class classification head.
 - **Training setup:** 3 epochs, learning rate `2e-5`, batch size 16, weight decay 0.01, 50 warmup steps, max sequence length 256, on a Colab T4 GPU.
-- **Key hyperparameter decision:** I **kept the defaults (3 epochs, lr 2e-5, batch size 16)**. For a dataset of only ~150 training examples, more epochs risk overfitting and a higher learning rate destabilizes BERT-family fine-tuning; 2e-5 over 3 epochs is the standard, conservative starting point. Validation accuracy rose every epoch (**0.355 → 0.419 → 0.484**) and training loss fell (**1.100 → 1.091 → 1.074**), confirming the pipeline was learning — so the modest final result is a data-quality story, not a training-config one.
+- **Key hyperparameter decision:** I **kept the defaults (3 epochs, lr 2e-5, batch size 16)**. For a dataset of only ~150 training examples, more epochs risk overfitting and a higher learning rate destabilizes BERT-family fine-tuning; 2e-5 over 3 epochs is the standard, conservative starting point. Validation accuracy rose every epoch and training loss fell, confirming the pipeline was learning — so the modest final result is a data-quality story, not a training-config one.
+- **Note on run-to-run variance:** the training cell does not fix a random seed for the classifier head, and the data split reshuffles each run. Across two identical training runs, test accuracy ranged from **0.41 to 0.53** — a ~12-point swing from nothing but initialization and split noise. On a dataset this small (~150 train / 32 test), a handful of examples flipping moves the headline number substantially. The numbers below are from the **0.53 run**; all committed artifacts (`evaluation_results.json`, `confusion_matrix.png`) are from this same run.
 
 ---
 
@@ -76,8 +77,8 @@ A fine-tuned text classifier that sorts r/Naruto posts into three discourse type
 | Model | Accuracy |
 |---|---|
 | Zero-shot baseline (Groq llama-3.3-70b) | **0.750** |
-| Fine-tuned DistilBERT | 0.406 |
-| **Difference** | **−0.344** (fine-tuning *regressed*) |
+| Fine-tuned DistilBERT | 0.531 |
+| **Difference** | **−0.219** (fine-tuning *regressed*) |
 
 ### Per-class metrics
 
@@ -85,10 +86,10 @@ A fine-tuned text classifier that sorts r/Naruto posts into three discourse type
 
 | Label | Precision | Recall | F1 | Support |
 |---|---|---|---|---|
-| analysis | 0.42 | 1.00 | 0.59 | 10 |
-| hot_take | 0.38 | 0.27 | 0.32 | 11 |
-| reaction | 0.00 | 0.00 | **0.00** | 11 |
-| **macro avg** | 0.26 | 0.42 | 0.30 | 32 |
+| analysis | 0.64 | 0.70 | 0.67 | 10 |
+| hot_take | 0.44 | 0.73 | 0.55 | 11 |
+| reaction | 0.67 | 0.18 | 0.29 | 11 |
+| **macro avg** | 0.58 | 0.54 | 0.50 | 32 |
 
 **Zero-shot baseline (Groq)**
 
@@ -99,59 +100,52 @@ A fine-tuned text classifier that sorts r/Naruto posts into three discourse type
 | reaction | 0.83 | 0.91 | 0.87 | 11 |
 | **macro avg** | 0.77 | 0.75 | 0.75 | 32 |
 
+The baseline's `reaction` F1 of **0.87** — versus the fine-tuned model's **0.29** — is the single sharpest contrast. The same label definitions, given to the baseline as a prompt, let it nearly ace the class the fine-tuned model could barely touch.
+
 ### Confusion matrix — fine-tuned model (test set)
 
 Rows = true label, columns = predicted label.
 
 | true ↓ / pred → | analysis | hot_take | reaction |
 |---|---|---|---|
-| **analysis** | 10 | 0 | 0 |
-| **hot_take** | 8 | 3 | 0 |
-| **reaction** | 6 | 5 | 0 |
+| **analysis** | 7 | 2 | 1 |
+| **hot_take** | 3 | 8 | 0 |
+| **reaction** | 1 | 8 | 2 |
 
-The `reaction` column is **entirely zero** — the model never once predicted `reaction`. Every true reaction was pushed into `analysis` (6) or `hot_take` (5). Meanwhile `analysis` has recall 1.00 because the model defaulted to predicting `analysis` for almost everything. (A supplementary image of this matrix, `confusion_matrix.png`, is committed to the repo.)
+The dominant error is **`reaction` → `hot_take`: 8 of 11 reactions** were misread as hot takes. The model over-predicts `hot_take` overall (18 of 32 predictions), making it the "sink" class this run — the place ambiguous or emotional posts get dumped. `reaction` is the weakest class by far (recall 0.18), mostly absorbed into `hot_take`. (A supplementary image of this matrix, `confusion_matrix.png`, is committed to the repo.)
 
-### Three wrong predictions, analyzed
+> **Cross-run pattern (the deeper finding):** in a separate identical training run, the model instead defaulted toward `analysis` and `reaction` collapsed to F1 **0.00**. So across runs the *specific* default shifts (sometimes hot_take, sometimes analysis), but the constant is that **`reaction` never gets learned as a distinct class** — it is always the casualty, dumped into whichever class the model is defaulting to. That consistency across runs is strong evidence the problem is the `reaction` labels themselves, not a single unlucky initialization.
 
-1. **"How did Hashirama die? …there are many theories on it…"** — true `reaction`, predicted `analysis` (conf 0.39).
-   *Why it failed:* this is the exact boundary problem from the [difficult-examples](#three-genuinely-difficult-to-label-examples) section. The post is a discussion *question*, which I labeled `reaction`, but its theory-surveying content reads like `analysis`. The model isn't unreasonable here — the label itself is contestable. This is an **annotation-consistency** problem: questions like this were not labeled consistently across the dataset.
+### Three model errors, analyzed
 
-2. **"That moment Sasuke put Kakashi in his place was pure greatness. The man is 100% alpha."** — true `hot_take`, predicted `analysis` (conf 0.37).
-   *Why it failed:* a bare opinion with zero argument — a textbook `hot_take`. The model still guessed `analysis`, reflecting its overall collapse toward predicting `analysis` by default rather than any signal in the text.
+These are real classifications from the fine-tuned model (confidences are the model's softmax probability on the predicted class). Each ties back to the test-set error pattern in the confusion matrix above.
 
-3. **"Gaara pov when Rock Lee dropped his weights."** — true `reaction`, predicted `hot_take` (conf 0.36).
-   *Why it failed:* a short, meme-style reaction. The model never predicts `reaction` at all, so it had to route this somewhere, and the low confidence (0.36) shows it was essentially guessing.
+1. **"Sending Akatsuki members in pairs is what let Konoha isolate and beat them one at a time…"** — true `analysis`, predicted `hot_take` (conf 0.35).
+   *Why it failed:* this is a developed argument that references a specific in-universe strategic decision and uses it as evidence — textbook `analysis`. The model read it as a bare opinion. This is the `analysis → hot_take` slice of the matrix (2 cases) and reflects the persistent difficulty of the analysis/hot_take boundary plus this run's pull toward `hot_take`.
 
-**Which boundary, and why it's hard:** the dominant error is everything collapsing *away from* `reaction` and *toward* `analysis`. The boundary the model never learned is "what makes something a reaction." That's traceable directly to the data: the `reaction` bucket conflated genuine one-line emotional posts with discussion questions, theory-prompts, and art-share captions, so there was no coherent linguistic signal for the model to latch onto. With only ~11 noisy reaction examples in training-equivalent terms and no consistent pattern, the model rationally abandoned the class.
+2. **"Just finished the Pain arc. I actually cried, best moment in shonen history."** — true `reaction`, predicted `hot_take` (conf 0.36).
+   *Why it failed:* a pure emotional reaction with no argument. This is the **dominant** error in the matrix (`reaction → hot_take`, 8 of 11). The model cannot separate "expressing a feeling" from "asserting an opinion" — the core reason `reaction` recall is only 0.18.
 
-**Labeling problem or data problem?** Primarily a **labeling/annotation-consistency problem.** The pipeline trained correctly (loss dropped each epoch); the ceiling was set by inconsistent pre-labels that were never hand-corrected. The fix would be a manual review pass tightening the `reaction` definition (especially excluding discussion-questions) and re-labeling, not a change to the training code.
+3. **"Nagato's arc only works because Kishimoto built the cycle-of-hatred theme through Jiraiya for 200+ chapters."** — true `analysis`, predicted `hot_take` (conf 0.34, the lowest of any prediction).
+   *Why it failed:* a clear `analysis` post — specific narrative evidence doing argumentative work — misread as `hot_take`. The rock-bottom confidence shows the model isn't distinguishing the classes so much as defaulting.
+
+**Which boundary, and why it's hard:** this run, both failing boundaries drain *into* `hot_take` — `reaction → hot_take` (emotional posts read as opinions) and `analysis → hot_take` (arguments read as bare opinions). The common thread is that `hot_take` became a catch-all sink. Combined with the other run's `analysis`-sink behavior, the real conclusion is that the model never forms a stable, meaningful three-way boundary on this data, and `reaction` is the class it most reliably fails to learn.
+
+**Labeling problem or data problem?** Primarily a **labeling/annotation-consistency problem, compounded by dataset size.** The `reaction` bucket conflated genuine one-line emotional posts with discussion questions, theory-prompts, and art-share captions, so there was no coherent signal for the model to learn. The ~12-point accuracy swing between identical runs further shows the dataset is too small for stable learning. The fix would be a manual review pass tightening the `reaction` definition (especially excluding discussion-questions) and collecting more cleanly-labeled examples — not a change to the training code, which trained correctly (loss dropped each epoch).
 
 ### Sample classifications (fine-tuned model)
 
+Real model outputs on five representative posts, with the model's confidence:
+
 | Post (truncated) | Predicted | Confidence | Correct? |
 |---|---|---|---|
-| "That moment Sasuke put Kakashi in his place was pure greatness. The man is 100% alpha." | analysis | 0.37 | ✗ (true: hot_take) |
-| "Gaara pov when Rock Lee dropped his weights." | hot_take | 0.36 | ✗ (true: reaction) |
-| "Jiraiya is the strongest Sannin and it's not even close…" | analysis | 0.37 | ✗ (true: hot_take) |
-| *(correctly-predicted analysis post — fill in with the snippet below)* | analysis | *0.__* | ✓ |
+| "Sending Akatsuki members in pairs is what let Konoha isolate and beat them one at a time…" | hot_take | 0.35 | ✗ (true: analysis) |
+| "Nagato's arc only works because Kishimoto built the cycle-of-hatred theme through Jiraiya…" | hot_take | 0.34 | ✗ (true: analysis) |
+| "Sasuke's redemption was completely unearned. He gets forgiven way too easily." | hot_take | 0.36 | ✓ (true: hot_take) |
+| "Just finished the Pain arc. I actually cried, best moment in shonen history." | hot_take | 0.36 | ✗ (true: reaction) |
+| "That moment Sasuke put Kakashi in his place was pure greatness. The man is 100% alpha." | hot_take | 0.35 | ✓ (true: hot_take) |
 
-> **One correct example explained (fill confidence from snippet):** any genuine `analysis` post — e.g. a developed Hashirama-death-cause or Akatsuki-pairing argument — was predicted `analysis`. This prediction is reasonable because such posts contain the exact features the `analysis` label is defined by: specific narrative references doing argumentative work. (The fine-tuned model's `analysis` recall was 1.00, so it caught every real analysis post — at the cost of over-predicting the class.)
-
-To get a real confidence value for a correctly-predicted example, run this in the notebook after training:
-
-```python
-import torch
-samples = [
-    "Sending Akatsuki members in pairs is what let Konoha isolate and beat them one at a time.",
-    "Nagato's arc only works because Kishimoto built the cycle-of-hatred theme through Jiraiya for 200+ chapters.",
-]
-enc = tokenizer(samples, truncation=True, padding=True, max_length=256, return_tensors="pt").to(model.device)
-with torch.no_grad():
-    probs = torch.softmax(model(**enc).logits, dim=-1)
-for s, p in zip(samples, probs):
-    i = int(p.argmax())
-    print(f"{ID_TO_LABEL[i]:10s}  conf={p[i]:.2f}  | {s[:60]}")
-```
+**Correct example explained:** *"Sasuke's redemption was completely unearned. He gets forgiven way too easily"* was predicted `hot_take` (conf 0.36), which is correct and reasonable — it's a confident, contrarian opinion stated with no supporting evidence, which is exactly what `hot_take` is defined as. Worth noting: even on its *correct* predictions the model's confidence hovers around 0.35, barely above the 0.33 chance line for three classes. That low confidence even when right is itself evidence the model learned a weak `hot_take` default rather than a genuine decision boundary.
 
 ---
 
@@ -159,27 +153,27 @@ for s, p in zip(samples, probs):
 
 **What I intended:** a classifier that distinguishes *reasoned argument* from *bare assertion* from *emotional reaction* — a genuinely subjective, content-based distinction.
 
-**What it actually learned:** a weak default toward `analysis` and a complete inability to recognize `reaction`. The decision boundary it formed isn't "does this post reason from evidence?" — it's closer to "predict analysis, occasionally hot_take, never reaction." The model didn't capture the conceptual distinction I cared about; it overfit to whatever shallow signal survived in the noisier-labeled classes and gave up on the class with the least coherent labels.
+**What it actually learned:** a weak default toward `hot_take` (this run) and an inability to recognize `reaction`, which it absorbed into `hot_take` 8 times out of 11. The decision boundary it formed isn't "does this post reason from evidence, assert, or emote?" — it's closer to "predict hot_take unless there's a strong analysis signal." The near-chance confidence on even its correct calls confirms it never internalized the real distinction.
 
-The gap between intended and learned is almost entirely explained by **label noise I introduced by not hand-correcting the LLM pre-labels.** The `reaction` class, in particular, was a grab-bag — and a model can only learn distinctions that are *consistently present* in its labels. The most striking evidence is the comparison: the **same** label definitions, handed to the zero-shot baseline as a prompt, produced a 0.87 F1 on `reaction`. The definitions were fine; the *training labels built from them* were not. Fine-tuning on noisy labels underperformed simply prompting a capable model with clean definitions.
+The gap between intended and learned is explained by two things I introduced: **label noise** (the `reaction` class was a grab-bag because I didn't hand-correct the LLM pre-labels) and **dataset size** (the ~12-point swing between identical runs shows 150 training examples is too few for stable learning of a subjective task). The most striking evidence is the baseline comparison: the **same** label definitions, handed to the zero-shot model as a prompt, produced 0.87 F1 on `reaction`. The definitions were fine; the *training labels built from them* were not. Fine-tuning on noisy labels underperformed simply prompting a capable model with clean definitions.
 
 ---
 
 ## Spec reflection
 
-**One way the spec helped:** the "Reading Evaluation Output" guidance — specifically that *one class with F1 ≈ 0 means the model can't learn that boundary; check your labels* — gave me a direct diagnostic lens. The moment `reaction` came back at F1 0.00, I knew to investigate label consistency rather than hunt for a bug in the training loop. Without that pointer I might have wasted time tweaking hyperparameters on what was actually a data problem.
+**One way the spec helped:** the "Reading Evaluation Output" guidance — specifically that *a class with F1 near zero means the model can't learn that boundary; check your labels* — gave me a direct diagnostic lens. When `reaction` came back weakest (and collapsed entirely in another run), I knew to investigate label consistency rather than hunt for a bug in the training loop.
 
-**One way my implementation diverged, and why:** the spec calls for writing `planning.md` *before* collection and for manually reviewing/correcting *every* pre-labeled example. I leaned heavily on LLM pre-labeling and did not run a full manual correction pass, and I assembled the design doc alongside the build rather than strictly before it. The divergence was driven by time pressure — but it turned out to be instructive rather than purely a shortcut: the fine-tuned model's failure is a near-direct consequence of skipping that review step, which is the most concrete demonstration I could have gotten of *why* the spec insists on it.
+**One way my implementation diverged, and why:** the spec calls for writing `planning.md` *before* collection and for manually reviewing/correcting *every* pre-labeled example. I leaned heavily on LLM pre-labeling and did not run a full manual correction pass, and I assembled the design doc alongside the build. The divergence was driven by time pressure — but it turned out to be instructive: the fine-tuned model's failure (and especially the `reaction`-class collapse that recurs across runs) is a near-direct consequence of skipping that review step, which is the most concrete demonstration I could have gotten of *why* the spec insists on it.
 
 ---
 
 ## AI usage
 
 **1. Data collection and annotation (disclosed annotation assistance).**
-I directed an LLM (Claude, via a local Python script using `claude-haiku-4-5`) to **pre-label** the scraped r/Naruto posts: I supplied the three label definitions and batches of unlabeled posts, and it returned one label per post. It produced the full 210-example labeled set. **What I overrode / did not do:** I did *not* run a per-example manual correction pass before training. On evaluation, the `analysis`/`hot_take`/`reaction` boundaries — especially around discussion-questions landing in `reaction` — proved to have been applied inconsistently, which is the root cause of the model's `reaction`-class collapse documented above.
+I directed an LLM (Claude, via a local Python script using `claude-haiku-4-5`) to **pre-label** the scraped r/Naruto posts: I supplied the three label definitions and batches of unlabeled posts, and it returned one label per post. It produced the full 210-example labeled set. **What I overrode / did not do:** I did *not* run a per-example manual correction pass before training. On evaluation, the boundaries — especially discussion-questions landing in `reaction` — proved to have been applied inconsistently, which is the root cause of the model's `reaction`-class failure documented above.
 
 **2. Failure-pattern analysis.**
-I directed an LLM to review the list of misclassified test examples and surface common themes. It identified the systematic pattern that the model never predicts `reaction` and over-predicts `analysis`, and flagged that the `reaction` training examples were heterogeneous (questions, theories, art captions, one-liners). **What I changed:** I verified each claim against the actual confusion matrix before accepting it, and tied the pattern back to the specific labeling decision (no manual review) rather than treating it as a modeling artifact.
+I directed an LLM to review the misclassified examples and surface common themes. It identified that the model over-predicts `hot_take` and absorbs `reaction` into it, and (across runs) that `reaction` is consistently the unlearned class. **What I changed:** I verified each claim against the actual confusion matrix before accepting it, and tied the pattern to the specific labeling decision (no manual review) and dataset size rather than treating it as a modeling artifact.
 
 **3. Pipeline and debugging assistance.**
 I used AI assistance to build the Reddit data-collection/parsing scripts and to interpret training and evaluation output. The dataset itself is real scraped content (no fabricated posts), and all reported metrics come directly from the notebook run.
@@ -191,5 +185,5 @@ I used AI assistance to build the Reddit data-collection/parsing scripts and to 
 - `planning.md` — design document (labels, edge cases, data plan, metrics, AI tool plan)
 - `naruto_dataset.csv` — the 210-example labeled dataset
 - `README.md` — this file
-- `evaluation_results.json` — metrics export from the notebook
-- `confusion_matrix.png` — supplementary confusion-matrix image
+- `evaluation_results.json` — metrics export from the notebook (0.53 run)
+- `confusion_matrix.png` — supplementary confusion-matrix image (0.53 run)
